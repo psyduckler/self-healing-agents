@@ -3,7 +3,10 @@
 import sys
 from pathlib import Path
 
-# Ensure the skill root is on the path so imports work
-SKILL_DIR = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(SKILL_DIR))
-sys.path.insert(0, str(SKILL_DIR / "scripts"))
+# Ensure src/ is on the path so the package is importable without install
+REPO_DIR = Path(__file__).resolve().parent.parent
+SRC_DIR = REPO_DIR / "src"
+sys.path.insert(0, str(SRC_DIR))
+# Also keep backward compat paths
+sys.path.insert(0, str(REPO_DIR))
+sys.path.insert(0, str(REPO_DIR / "scripts"))

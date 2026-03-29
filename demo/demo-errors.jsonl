@@ -1,0 +1,5 @@
+{"id": "err-001", "message": "FileNotFoundError: /tmp/compare-shell-template.json", "timestamp": "2026-03-29T19:30:38.096421+00:00", "level": "error", "source": "cron", "name": "deploy-prod"}
+{"id": "err-002", "message": "ConnectionRefusedError: [Errno 61] Connection refused", "timestamp": "2026-03-29T20:00:38.096421+00:00", "level": "error", "source": "api", "name": "api-healthcheck"}
+{"id": "err-003", "message": "FileNotFoundError: /tmp/backup-config.json", "timestamp": "2026-03-29T20:30:38.096421+00:00", "level": "warning", "source": "cron", "name": "cron-backup"}
+{"id": "err-004", "message": "TimeoutError: Request timed out after 30s connecting to redis:6379", "timestamp": "2026-03-29T20:45:38.096421+00:00", "level": "error", "source": "worker", "name": "queue-processor"}
+{"id": "err-005", "message": "429 Too Many Requests: Rate limit exceeded for Instagram API", "timestamp": "2026-03-29T21:10:38.096421+00:00", "level": "warning", "source": "social", "name": "instagram-poster"}

@@ -1,0 +1,20 @@
+sources:
+  logfile:
+    enabled: true
+    paths:
+      - demo/demo.log
+    error_patterns:
+      - "ERROR|FATAL|CRITICAL"
+      - "Traceback"
+      - "Exception"
+    severity_map:
+      FATAL: critical
+      CRITICAL: critical
+      ERROR: warning
+  jsonl:
+    enabled: true
+    path: demo/demo-errors.jsonl
+    error_field: message
+    timestamp_field: timestamp
+    severity_field: level
+    id_field: id

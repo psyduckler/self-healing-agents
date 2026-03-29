@@ -4,6 +4,7 @@
 
 ![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)
 ![License MIT](https://img.shields.io/badge/license-MIT-green.svg)
+![CI](https://github.com/psyduckler/self-healing-agents/actions/workflows/ci.yml/badge.svg)
 
 ---
 
@@ -35,45 +36,90 @@ Every fix makes the system smarter.
 
 ---
 
+## Demo
+
+```bash
+# Install
+pip install self-healing-agents
+
+# Scan for failures
+$ self-heal scan --hours 6
+⚡ 1 cascading failure group(s) detected:
+  🟡 [time_proximity] 3 failures within 5 minutes — likely shared root cause
+     Affected: deploy-prod, api-healthcheck, cron-backup
+     → Investigate shared dependencies before fixing individually
+
+🔍 3 individual failure(s) in the last 6 hours:
+  🔴 [logfile] deploy-prod
+     Error: fatal: remote contains work that you do not have locally
+  🟡 [jsonl] api-healthcheck
+     Error: ConnectionRefusedError: [Errno 61] Connection refused
+  🟡 [cron] cron-backup
+     Error: FileNotFoundError: /tmp/backup-config.json
+
+# Check if there's a known fix
+$ self-heal check "FileNotFoundError: /tmp/backup-config.json"
+{
+  "match": true,
+  "confidence": 0.92,
+  "autoApply": true,
+  "knownFix": {
+    "cause": "macOS /tmp cleanup removed file from volatile directory",
+    "fix": "Move file to permanent location, update code to use relative path",
+    "fixType": "heal",
+    "healCount": 4
+  }
+}
+
+# Assess risk before applying
+$ self-heal risk "Moving config from /tmp to ./config for static site build"
+{
+  "riskScore": 0.2,
+  "decision": "auto_apply",
+  "decisionText": "✅ Low risk — safe to auto-apply"
+}
+```
+
+See [`demo/demo.sh`](demo/demo.sh) for a full interactive walkthrough.
+
+---
+
 ## Quick Start
 
 ### Install
 
 ```bash
-# Clone or copy the skill
-cd ~/.openclaw/workspace/skills/self-healing
+# Install from source
+pip install -e ".[dev]"
 
-# Install dependencies (just PyYAML — everything else is stdlib)
+# Or just install dependencies
 pip install -r requirements.txt
-
-# Or install as a package
-pip install -e .
 ```
 
 ### Scan for failures
 
 ```bash
 # Default: scans OpenClaw cron jobs + sub-agents + /tmp logs
-python3 scripts/scan-failures.py
+self-heal scan
 
 # JSON output for programmatic use
-python3 scripts/scan-failures.py --json
+self-heal scan --json
 
 # Scan last 24 hours
-python3 scripts/scan-failures.py --hours 24
+self-heal scan --hours 24
 
 # Scan specific source only
-python3 scripts/scan-failures.py --source openclaw
-python3 scripts/scan-failures.py --source logfile
+self-heal scan --source openclaw
+self-heal scan --source logfile
 
 # Use a config file
-python3 scripts/scan-failures.py --config self-healing.yaml
+self-heal scan --config self-healing.yaml
 ```
 
 ### Check for a known fix
 
 ```bash
-python3 scripts/self-heal.py check "FileNotFoundError: /tmp/template.json"
+self-heal check "FileNotFoundError: /tmp/template.json"
 ```
 
 Returns:
@@ -97,7 +143,7 @@ Returns:
 ### Log a new fix
 
 ```bash
-python3 scripts/self-heal.py log \
+self-heal log \
   --error "FileNotFoundError: /tmp/template.json" \
   --cause "macOS /tmp cleanup" \
   --fix "Moved to permanent path" \
@@ -259,7 +305,7 @@ Every fix is scored for risk before application. The engine checks:
 
 ```bash
 # Score a fix
-python3 scripts/self-heal.py risk "Fix email notification template"
+self-heal risk "Fix email notification template"
 ```
 
 ```json
@@ -359,7 +405,7 @@ Without a config file, the scanner defaults to OpenClaw sources + `/tmp/*.log` s
 ## Stats & Metrics
 
 ```bash
-python3 scripts/self-heal.py stats
+self-heal stats
 ```
 
 ```json
@@ -389,10 +435,10 @@ Other commands:
 
 ```bash
 # List all known fixes
-python3 scripts/self-heal.py list
+self-heal list
 
 # Check risk of a system change
-python3 scripts/self-heal.py risk "deploy new config to production"
+self-heal risk "deploy new config to production"
 ```
 
 ---
@@ -400,28 +446,41 @@ python3 scripts/self-heal.py risk "deploy new config to production"
 ## Project Structure
 
 ```
-self-healing/
-├── SKILL.md                 # Agent-facing instructions (OpenClaw skill)
-├── README.md                # This file
-├── LICENSE                  # MIT
-├── pyproject.toml           # Package config
-├── requirements.txt         # pyyaml
-├── scripts/
-│   ├── scan-failures.py     # Multi-source failure scanner
-│   └── self-heal.py         # Known-fixes DB manager + risk engine
-├── sources/
-│   ├── __init__.py          # Plugin registry
-│   ├── base.py              # Abstract base class
-│   ├── openclaw.py          # OpenClaw cron + sub-agent source
-│   ├── logfile.py           # Log file glob scanner
-│   └── jsonl.py             # JSONL structured error source
+self-healing-agents/
+├── SKILL.md                     # Agent-facing instructions (OpenClaw skill)
+├── README.md                    # This file
+├── LICENSE                      # MIT
+├── pyproject.toml               # Package config + entry points
+├── requirements.txt             # pyyaml
+├── src/
+│   └── self_healing/            # Main package
+│       ├── __init__.py          # Version
+│       ├── cli.py               # Unified CLI entry point
+│       ├── scanner.py           # Failure scanner + cascade detection
+│       ├── healer.py            # Known-fixes DB + matching + risk engine
+│       └── sources/             # Source plugins
+│           ├── __init__.py      # Plugin registry
+│           ├── base.py          # Abstract base class
+│           ├── openclaw.py      # OpenClaw cron + sub-agent source
+│           ├── logfile.py       # Log file glob scanner
+│           └── jsonl.py         # JSONL structured error source
+├── scripts/                     # Backward-compatible thin wrappers
+│   ├── scan-failures.py         # → self_healing.scanner
+│   └── self-heal.py             # → self_healing.healer
+├── demo/                        # Demo data + runner script
+│   ├── demo.sh
+│   ├── demo-config.yaml
+│   ├── demo-errors.jsonl
+│   └── demo.log
+├── .github/workflows/ci.yml    # GitHub Actions CI
 ├── references/
-│   └── error-patterns.md    # Common error patterns reference
+│   └── error-patterns.md        # Common error patterns reference
 └── tests/
-    ├── test_matching.py     # Smart match engine tests
-    ├── test_risk.py         # Risk scoring tests
-    ├── test_sources.py      # Source plugin tests
-    └── test_cascades.py     # Cascade detection tests
+    ├── test_cli.py              # CLI parsing tests
+    ├── test_matching.py         # Smart match engine tests
+    ├── test_risk.py             # Risk scoring tests
+    ├── test_sources.py          # Source plugin tests
+    └── test_cascades.py         # Cascade detection tests
 ```
 
 ---
@@ -430,7 +489,7 @@ self-healing/
 
 1. Fork / clone
 2. `pip install -e ".[dev]"`
-3. `python3 -m pytest tests/`
+3. `python -m pytest tests/ -v`
 4. Make changes, add tests
 5. Open a PR
 
