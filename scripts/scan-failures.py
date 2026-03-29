@@ -1,24 +1,34 @@
 #!/usr/bin/env python3
 """
-scan-failures.py — Scan OpenClaw cron jobs and recent sub-agents for failures.
+scan-failures.py — Scan for failures across multiple sources using a plugin architecture.
 Includes cascading failure detection — groups related failures that likely share a root cause.
 
 Usage:
-  python3 scan-failures.py [--hours N] [--json]
+  python3 scan-failures.py [--hours N] [--json] [--source NAME] [--config PATH]
 
 Options:
-  --hours N   Look back N hours (default: 6)
-  --json      Output raw JSON (default: human-readable summary)
+  --hours N       Look back N hours (default: 6)
+  --json          Output raw JSON (default: human-readable summary)
+  --source NAME   Scan only this source (can be repeated). Default: all configured sources.
+  --config PATH   Path to config file (YAML or JSON). Default: auto-detect.
+
+Backward compatible: if no config or source is specified, scans OpenClaw + default log paths.
 """
 
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
+
+# Add parent dir to path so we can import sources/
+SCRIPT_DIR = Path(__file__).resolve().parent
+SKILL_DIR = SCRIPT_DIR.parent
+sys.path.insert(0, str(SKILL_DIR))
+
+from sources import get_source, get_all_sources, list_sources
 
 
 # ─── Cascading Failure Detection ───────────────────────────────────────────────
@@ -63,7 +73,50 @@ CASCADE_SIGNATURES = {
 }
 
 
-def detect_cascades(failures):
+def load_config(config_path=None):
+    """Load config from file, auto-detecting format. Returns dict or None."""
+    if config_path:
+        p = Path(config_path)
+        if not p.exists():
+            print(f"Warning: config file not found: {config_path}", file=sys.stderr)
+            return None
+        return _parse_config_file(p)
+
+    # Auto-detect config in skill dir or workspace
+    for candidate in [
+        SKILL_DIR / "self-healing.yaml",
+        SKILL_DIR / "self-healing.yml",
+        SKILL_DIR / "self-healing.json",
+    ]:
+        if candidate.exists():
+            return _parse_config_file(candidate)
+
+    return None
+
+
+def _parse_config_file(path: Path) -> dict:
+    """Parse a YAML or JSON config file."""
+    content = path.read_text()
+    if path.suffix in (".yaml", ".yml"):
+        try:
+            import yaml
+            return yaml.safe_load(content)
+        except ImportError:
+            print("Warning: PyYAML not installed, falling back to JSON config", file=sys.stderr)
+            return None
+    else:
+        return json.loads(content)
+
+
+def merge_cascade_signatures(config):
+    """Merge user-defined cascade signatures with defaults."""
+    merged = dict(CASCADE_SIGNATURES)
+    if config and "cascades" in config:
+        merged.update(config["cascades"])
+    return merged
+
+
+def detect_cascades(failures, cascade_sigs=None):
     """
     Group failures that likely share a root cause.
 
@@ -77,11 +130,11 @@ def detect_cascades(failures):
     if len(failures) < 2:
         return []
 
+    sigs = cascade_sigs or CASCADE_SIGNATURES
     cascades = []
 
     # Check for known cascade signatures across all failure errors
-    all_errors = " ".join(f.get("error", "") for f in failures)
-    for cascade_name, sig in CASCADE_SIGNATURES.items():
+    for cascade_name, sig in sigs.items():
         matching_failures = []
         for f in failures:
             error = f.get("error", "")
@@ -161,157 +214,13 @@ def detect_cascades(failures):
     return cascades
 
 
-# ─── Scanners ──────────────────────────────────────────────────────────────────
-
-def get_cron_failures():
-    """Check cron jobs for error status."""
-    failures = []
-    try:
-        result = subprocess.run(
-            ["openclaw", "cron", "list"],
-            capture_output=True, text=True, timeout=15
-        )
-        if result.returncode != 0:
-            return failures
-
-        for line in result.stdout.strip().split("\n")[1:]:  # Skip header
-            parts = line.split()
-            if len(parts) < 8:
-                continue
-            job_id = parts[0]
-            name = parts[1]
-            status = None
-            for p in parts:
-                if p in ("ok", "error", "running", "idle", "timeout"):
-                    status = p
-                    break
-            if status == "error":
-                failures.append({
-                    "source": "cron",
-                    "id": job_id,
-                    "name": name,
-                    "error": f"Cron job '{name}' in error state",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "severity": "warning",
-                    "raw_line": line.strip()
-                })
-    except Exception as e:
-        failures.append({
-            "source": "system",
-            "id": "cron-scan",
-            "name": "Cron scanner",
-            "error": f"Failed to scan crons: {e}",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "severity": "info"
-        })
-    return failures
-
-
-def get_subagent_failures(hours=6):
-    """Check recent sub-agent runs for failures."""
-    failures = []
-    runs_path = Path.home() / ".openclaw" / "subagents" / "runs.json"
-    if not runs_path.exists():
-        return failures
-
-    try:
-        data = json.loads(runs_path.read_text())
-        cutoff = time.time() - (hours * 3600)
-
-        raw_runs = data if isinstance(data, list) else data.get("runs", data)
-        if isinstance(raw_runs, dict):
-            runs = list(raw_runs.values())
-        else:
-            runs = raw_runs
-
-        for run in runs:
-            if not isinstance(run, dict):
-                continue
-            ts = run.get("startedAt", run.get("createdAt", 0))
-            if isinstance(ts, str):
-                try:
-                    ts_val = float(ts)
-                    ts = ts_val / 1000 if ts_val > 1e12 else ts_val
-                except ValueError:
-                    try:
-                        ts = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
-                    except:
-                        continue
-            elif isinstance(ts, (int, float)):
-                ts = ts / 1000 if ts > 1e12 else ts
-            if ts < cutoff:
-                continue
-
-            status = run.get("status", "")
-            outcome = run.get("outcome", "")
-            if isinstance(outcome, str) and "error" in outcome:
-                status = "error"
-            elif isinstance(outcome, dict):
-                status = outcome.get("status", status)
-            ended_reason = run.get("endedReason", "")
-            if ended_reason in ("timeout", "error"):
-                status = ended_reason
-            if status in ("error", "failed", "timeout"):
-                failures.append({
-                    "source": "subagent",
-                    "id": run.get("sessionKey", run.get("id", "unknown")),
-                    "name": run.get("label", run.get("task", "unknown")[:80]),
-                    "error": run.get("error", run.get("frozenResultText", f"Sub-agent {status}"))[:500],
-                    "timestamp": datetime.fromtimestamp(ts, tz=timezone.utc).isoformat() if ts > 0 else "unknown",
-                    "severity": "warning" if status == "timeout" else "critical"
-                })
-    except Exception as e:
-        failures.append({
-            "source": "system",
-            "id": "subagent-scan",
-            "name": "Sub-agent scanner",
-            "error": f"Failed to scan sub-agents: {e}",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "severity": "info"
-        })
-    return failures
-
-
-def get_deploy_failures(hours=6):
-    """Check for recent deploy/git push failures in common log locations."""
-    failures = []
-    log_dir = Path("/tmp")
-    cutoff_time = time.time() - (hours * 3600)
-
-    # Scan any log files in /tmp that might contain errors
-    log_patterns = ["compare-batch.log", "fulfillment.log", "compare-gen-*.log"]
-    for pattern in log_patterns:
-        for log_path in log_dir.glob(pattern):
-            if not log_path.is_file():
-                continue
-            if log_path.stat().st_mtime < cutoff_time:
-                continue
-            try:
-                content = log_path.read_text()
-                for line in content.split("\n"):
-                    line_lower = line.lower()
-                    if any(kw in line_lower for kw in ["error", "failed", "fatal", "traceback", "exception"]):
-                        failures.append({
-                            "source": "deploy",
-                            "id": str(log_path),
-                            "name": log_path.name,
-                            "error": line.strip()[:300],
-                            "timestamp": datetime.fromtimestamp(
-                                log_path.stat().st_mtime, tz=timezone.utc
-                            ).isoformat(),
-                            "severity": "warning"
-                        })
-                        break
-            except Exception:
-                pass
-    return failures
-
-
 # ─── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
     hours = 6
     output_json = False
+    source_names = []
+    config_path = None
 
     args = sys.argv[1:]
     i = 0
@@ -322,16 +231,54 @@ def main():
         elif args[i] == "--json":
             output_json = True
             i += 1
+        elif args[i] == "--source" and i + 1 < len(args):
+            source_names.append(args[i + 1])
+            i += 2
+        elif args[i] == "--config" and i + 1 < len(args):
+            config_path = args[i + 1]
+            i += 2
         else:
             i += 1
 
+    # Load config
+    config = load_config(config_path)
+
+    # Merge cascade signatures
+    cascade_sigs = merge_cascade_signatures(config)
+
+    # Determine which sources to scan
     all_failures = []
-    all_failures.extend(get_cron_failures())
-    all_failures.extend(get_subagent_failures(hours))
-    all_failures.extend(get_deploy_failures(hours))
+
+    if source_names:
+        # Explicit sources requested
+        for name in source_names:
+            try:
+                src_config = config.get("sources", {}).get(name, {}) if config else {}
+                source = get_source(name, src_config if src_config else None)
+                all_failures.extend(source.scan(hours))
+            except KeyError as e:
+                print(f"Warning: {e}", file=sys.stderr)
+    elif config:
+        # Use config to determine sources
+        sources = get_all_sources(config)
+        for source in sources:
+            all_failures.extend(source.scan(hours))
+    else:
+        # Backward compatible: try OpenClaw + default logfile scanning
+        try:
+            openclaw_src = get_source("openclaw")
+            all_failures.extend(openclaw_src.scan(hours))
+        except Exception:
+            pass
+
+        try:
+            logfile_src = get_source("logfile")
+            all_failures.extend(logfile_src.scan(hours))
+        except Exception:
+            pass
 
     # Detect cascading failures
-    cascades = detect_cascades(all_failures)
+    cascades = detect_cascades(all_failures, cascade_sigs)
 
     # Sort individual failures by severity
     severity_order = {"critical": 0, "warning": 1, "info": 2}

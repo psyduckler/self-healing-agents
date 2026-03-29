@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "self-healing"
+version = "0.1.0"
+description = "Autonomous error detection, diagnosis, and repair for AI agents"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.9"
+dependencies = ["pyyaml>=5.0"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.setuptools.packages.find]
+include = ["sources*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
