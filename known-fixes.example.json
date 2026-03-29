@@ -1,0 +1,75 @@
+[
+  {
+    "id": "a47bcb00",
+    "pattern": "FileNotFoundError: /tmp/compare-shell-template.json",
+    "patternRegex": "FileNotFoundError:\\ [/\\\\][\\w.-]+[/\\\\][\\w.-]+[/\\\\][\\w.-]+[/\\\\][\\w.-]+[/\\\\][\\w.-]+",
+    "cause": "macOS /tmp cleanup removed file from volatile directory",
+    "fix": "Moved template to tabiji/scripts/compare-shell-template.json, updated Python script to use Path(__file__).resolve().parent for relative path resolution",
+    "fixType": "heal",
+    "severity": "critical",
+    "filesChanged": [
+      "scripts/batch-compare-gen.py",
+      "scripts/compare-shell-template.json"
+    ],
+    "commit": "b605c306",
+    "source": "cron",
+    "timestamp": "2026-03-29T14:55:08.414079+00:00",
+    "healCount": 1
+  },
+  {
+    "id": "d83635f0",
+    "pattern": "git push rejected: remote contains work that you do not have locally",
+    "patternRegex": "git\\ push\\ rejected:\\ remote\\ contains\\ work\\ that\\ you\\ do\\ not\\ have\\ locally",
+    "cause": "Multiple sub-agents pushing concurrently cause remote ahead rejections",
+    "fix": "Add git pull --rebase before git push in deployment scripts",
+    "fixType": "heal",
+    "severity": "warning",
+    "filesChanged": [],
+    "commit": "",
+    "source": "deploy",
+    "timestamp": "2026-03-29T14:55:30.930285+00:00",
+    "healCount": 1
+  },
+  {
+    "id": "da6c19e4",
+    "pattern": "JSONDecodeError: Unterminated string",
+    "patternRegex": "JSONDecodeError:\\ Unterminated\\ string",
+    "cause": "LLM output truncated or malformed JSON from AI generation",
+    "fix": "Retry generation with same prompt \u2014 transient LLM output issue",
+    "fixType": "retry",
+    "severity": "warning",
+    "filesChanged": [],
+    "commit": "",
+    "source": "subagent",
+    "timestamp": "2026-03-29T14:55:30.958287+00:00",
+    "healCount": 1
+  },
+  {
+    "id": "66f47b69",
+    "pattern": "Message failed: missing to parameter",
+    "patternRegex": "Message\\ failed:\\ missing\\ to\\ parameter",
+    "cause": "Cron delivery config missing to field or using channel: last for isolated sessions",
+    "fix": "Set channel: slack AND to: channel-id in cron delivery config",
+    "fixType": "heal",
+    "severity": "warning",
+    "filesChanged": [],
+    "commit": "",
+    "source": "cron",
+    "timestamp": "2026-03-29T14:55:30.986436+00:00",
+    "healCount": 1
+  },
+  {
+    "id": "e2c2ba3b",
+    "pattern": "Cron job in error state with lastError: Message failed",
+    "patternRegex": "Cron\\ job\\ in\\ error\\ state\\ with\\ lastError:\\ Message\\ failed",
+    "cause": "Cron error state blocks next run; disable+enable cycle clears error state",
+    "fix": "openclaw cron disable <id> && openclaw cron enable <id>",
+    "fixType": "heal",
+    "severity": "warning",
+    "filesChanged": [],
+    "commit": "",
+    "source": "manual",
+    "timestamp": "2026-03-29T14:58:42.396024+00:00",
+    "healCount": 1
+  }
+]
