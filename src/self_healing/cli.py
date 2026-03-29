@@ -66,6 +66,26 @@ def cmd_risk(args):
     _risk(args.description)
 
 
+def cmd_notified(args):
+    """Check if a heal was already notified."""
+    from .healer import cmd_notified as _notified
+    _notified(args.error)
+
+
+def cmd_mark_notified(args):
+    """Mark a heal as notified."""
+    from .healer import mark_notified as _mark
+    _mark(args.fix_id, args.error, args.fix or "")
+    import json
+    print(json.dumps({"marked": True, "error": args.error[:100]}))
+
+
+def cmd_clear_notified(args):
+    """Clear notification records."""
+    from .healer import cmd_clear_notified as _clear
+    _clear(args.fix_id)
+
+
 def cmd_version(args):
     """Print version."""
     print(f"self-healing-agents v{__version__}")
@@ -116,6 +136,23 @@ def build_parser():
     p_risk = subparsers.add_parser("risk", help="Score the risk of a fix or system change")
     p_risk.add_argument("description", help="Description of the fix or change")
     p_risk.set_defaults(func=cmd_risk)
+
+    # notified
+    p_notified = subparsers.add_parser("notified", help="Check if a heal was already notified")
+    p_notified.add_argument("error", help="Error message to check")
+    p_notified.set_defaults(func=cmd_notified)
+
+    # mark-notified
+    p_mark = subparsers.add_parser("mark-notified", help="Mark a heal as notified (suppress future alerts)")
+    p_mark.add_argument("error", help="Error message that was healed")
+    p_mark.add_argument("--fix-id", default=None, help="Known-fix ID")
+    p_mark.add_argument("--fix", default=None, help="Description of the fix applied")
+    p_mark.set_defaults(func=cmd_mark_notified)
+
+    # clear-notified
+    p_clear = subparsers.add_parser("clear-notified", help="Clear notification records")
+    p_clear.add_argument("fix_id", nargs="?", default=None, help="Specific fix ID to clear (omit for all)")
+    p_clear.set_defaults(func=cmd_clear_notified)
 
     # version
     p_version = subparsers.add_parser("version", help="Show version")

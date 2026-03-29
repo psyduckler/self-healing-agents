@@ -19,6 +19,7 @@ from pathlib import Path
 WORKSPACE = Path(os.environ.get("OPENCLAW_WORKSPACE", Path.home() / ".openclaw" / "workspace"))
 DB_PATH = WORKSPACE / "known-fixes.json"
 RISK_PATH = WORKSPACE / "risk-profiles.json"
+NOTIFICATIONS_PATH = WORKSPACE / "heal-notifications.json"
 
 # ─── Matching Engine (v2) ──────────────────────────────────────────────────────
 
@@ -279,6 +280,73 @@ def score_risk(description, fix_type="heal"):
     }
 
 
+# ─── Notification Deduplication ─────────────────────────────────────────────────
+
+def load_notifications():
+    """Load the heal notification log."""
+    if NOTIFICATIONS_PATH.exists():
+        try:
+            return json.loads(NOTIFICATIONS_PATH.read_text())
+        except json.JSONDecodeError:
+            return {}
+    return {}
+
+
+def save_notifications(notifs):
+    """Save the heal notification log."""
+    NOTIFICATIONS_PATH.write_text(json.dumps(notifs, indent=2) + "\n")
+
+
+def was_already_notified(fix_id, error_text):
+    """
+    Check if a heal for this fix has already been notified.
+    Returns True if a notification was already sent and the error hasn't recurred
+    (i.e., the fix is still holding — same fix_id, no new occurrence since last notification).
+    """
+    notifs = load_notifications()
+    key = fix_id or _notification_key(error_text)
+    return key in notifs
+
+
+def mark_notified(fix_id, error_text, fix_description=""):
+    """
+    Record that a heal notification was sent, so future heartbeats skip it.
+    """
+    notifs = load_notifications()
+    key = fix_id or _notification_key(error_text)
+    notifs[key] = {
+        "error": error_text[:200],
+        "fix": fix_description[:200],
+        "notifiedAt": datetime.now(timezone.utc).isoformat(),
+    }
+    save_notifications(notifs)
+
+
+def clear_notification(fix_id=None, error_text=None):
+    """
+    Clear a notification record (e.g., when the same error recurs after a heal,
+    indicating the fix didn't hold and a new notification is warranted).
+    """
+    notifs = load_notifications()
+    key = fix_id or _notification_key(error_text or "")
+    if key in notifs:
+        del notifs[key]
+        save_notifications(notifs)
+        return True
+    return False
+
+
+def clear_all_notifications():
+    """Clear all notification records."""
+    save_notifications({})
+
+
+def _notification_key(error_text):
+    """Generate a stable key from error text for dedup when no fix_id is available."""
+    # Use first 100 chars of lowercased error as a rough key
+    return error_text.strip().lower()[:100]
+
+
 # ─── Commands ──────────────────────────────────────────────────────────────────
 
 def load_db():
@@ -492,11 +560,40 @@ def cmd_stats():
     }, indent=2))
 
 
+def cmd_notified(error_text):
+    """Check if a heal was already notified for this error."""
+    notifs = load_notifications()
+    key = _notification_key(error_text)
+    # Also check by fix_id (iterate values to match error text)
+    found = None
+    if key in notifs:
+        found = notifs[key]
+    else:
+        for k, v in notifs.items():
+            if v.get("error", "").lower().startswith(error_text.strip().lower()[:50]):
+                found = v
+                break
+    if found:
+        print(json.dumps({"alreadyNotified": True, **found}, indent=2))
+    else:
+        print(json.dumps({"alreadyNotified": False}, indent=2))
+
+
+def cmd_clear_notified(fix_id=None):
+    """Clear notification records."""
+    if fix_id:
+        removed = clear_notification(fix_id=fix_id)
+        print(json.dumps({"cleared": removed, "id": fix_id}))
+    else:
+        clear_all_notifications()
+        print(json.dumps({"cleared": True, "all": True}))
+
+
 def main():
     """CLI entry point for self-heal.py (backward compat)."""
     if len(sys.argv) < 2:
         print("Usage: self-heal <command> [args]")
-        print("Commands: check, log, list, stats, risk")
+        print("Commands: check, log, list, stats, risk, notified, mark-notified, clear-notified")
         sys.exit(1)
 
     cmd = sys.argv[1]
@@ -517,6 +614,33 @@ def main():
             print("Usage: self-heal risk \"<description of system/fix>\"")
             sys.exit(1)
         cmd_risk(sys.argv[2])
+    elif cmd == "notified":
+        if len(sys.argv) < 3:
+            print("Usage: self-heal notified \"<error message>\"")
+            sys.exit(1)
+        cmd_notified(sys.argv[2])
+    elif cmd == "mark-notified":
+        if len(sys.argv) < 3:
+            print("Usage: self-heal mark-notified \"<error message>\" [--fix-id ID] [--fix \"description\"]")
+            sys.exit(1)
+        error = sys.argv[2]
+        fix_id = None
+        fix_desc = ""
+        i = 3
+        while i < len(sys.argv):
+            if sys.argv[i] == "--fix-id" and i + 1 < len(sys.argv):
+                fix_id = sys.argv[i + 1]
+                i += 2
+            elif sys.argv[i] == "--fix" and i + 1 < len(sys.argv):
+                fix_desc = sys.argv[i + 1]
+                i += 2
+            else:
+                i += 1
+        mark_notified(fix_id, error, fix_desc)
+        print(json.dumps({"marked": True, "error": error[:100]}))
+    elif cmd == "clear-notified":
+        fix_id = sys.argv[2] if len(sys.argv) > 2 else None
+        cmd_clear_notified(fix_id)
     else:
         print(f"Unknown command: {cmd}")
         sys.exit(1)

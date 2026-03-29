@@ -132,6 +132,28 @@ Run: `python3 <skill-dir>/scripts/scan-failures.py`
 - Post to #mission-control: `🔧 Self-healing: [what was fixed]` or `🚨 Needs attention: [what failed and why]`
 ```
 
+### No Repeat Notifications
+
+Once you've reported a self-heal to a channel, **do not re-report the same fix on subsequent heartbeats.** Use the notification dedup system:
+
+1. **Before notifying:** Check if already reported:
+   ```bash
+   self-heal notified "<error message>"
+   ```
+   If `alreadyNotified: true` → skip the notification silently.
+
+2. **After notifying:** Mark it:
+   ```bash
+   self-heal mark-notified "<error message>" --fix-id "<id>" --fix "<what was done>"
+   ```
+
+3. **If the same error recurs** (fix didn't hold) → that's a *new* occurrence. Clear the old notification and report again:
+   ```bash
+   self-heal clear-notified "<fix-id>"
+   ```
+
+This prevents noisy channels where the same "🔧 Self-healed: re-enabled X" message appears every 30 minutes. Only genuinely new heals get reported.
+
 ## Known Fixes Database Schema
 
 `known-fixes.json` stores learned fixes:

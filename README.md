@@ -402,6 +402,57 @@ Without a config file, the scanner defaults to OpenClaw sources + `/tmp/*.log` s
 
 ---
 
+## Notification Deduplication
+
+When self-healing runs on a schedule (e.g., every heartbeat), the same fix can trigger repeat notifications. The dedup system prevents this — once a heal is reported, it won't fire again until a genuinely new occurrence happens.
+
+```bash
+# Check if a heal was already reported
+$ self-heal notified "FileNotFoundError: /tmp/backup-config.json"
+{
+  "alreadyNotified": true,
+  "error": "FileNotFoundError: /tmp/backup-config.json",
+  "fix": "Moved to permanent path",
+  "notifiedAt": "2026-03-29T22:15:00+00:00"
+}
+
+# Mark a heal as reported (call this after sending your notification)
+$ self-heal mark-notified "FileNotFoundError: /tmp/backup-config.json" \
+    --fix-id "a1b2c3d4" \
+    --fix "Moved to permanent path"
+
+# Clear a notification (when the same error recurs — fix didn't hold)
+$ self-heal clear-notified a1b2c3d4
+
+# Clear all notification records
+$ self-heal clear-notified
+```
+
+### How It Works
+
+Notifications are tracked in `heal-notifications.json` in your workspace root. Each entry records the error, fix description, and timestamp. The dedup check uses the error text (or fix ID) as a key.
+
+**When to report:** A heal is genuinely new — first time this error was seen, or it recurred after a previous fix (the fix didn't hold).
+
+**When to skip:** The scanner detects an error that was already healed and reported. The fix is holding. No need to re-alert.
+
+### Heartbeat Integration
+
+In your heartbeat workflow, wrap notifications like this:
+
+```
+1. Run scan → detect failure
+2. Check known fix → apply fix → verify
+3. Before notifying:
+   - self-heal notified "<error>" → if alreadyNotified, skip
+4. Send notification to channel
+5. self-heal mark-notified "<error>" --fix "<description>"
+```
+
+This keeps channels clean and focused on genuinely new events.
+
+---
+
 ## Stats & Metrics
 
 ```bash
@@ -439,6 +490,11 @@ self-heal list
 
 # Check risk of a system change
 self-heal risk "deploy new config to production"
+
+# Check/manage notification dedup (see Notification Deduplication section)
+self-heal notified "FileNotFoundError: /tmp/config.json"
+self-heal mark-notified "FileNotFoundError: /tmp/config.json" --fix "Moved to permanent path"
+self-heal clear-notified
 ```
 
 ---
