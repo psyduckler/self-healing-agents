@@ -32,6 +32,66 @@ No human was awake. The AI agent (running on [OpenClaw](https://github.com/openc
 
 By the time the human checked in at 9 AM, everything was already fixed. That incident became the seed for this project.
 
+## Features
+
+### 🧠 Smart Multi-Signal Matching (v1.1)
+
+The matching engine uses 6 independent signals to find known fixes — even when the error message is worded differently:
+
+| Signal | What it does | Example |
+|--------|-------------|---------|
+| Regex | Pattern author's custom regex | `FileNotFoundError.*\/tmp\/` |
+| Substring | Exact text contained | "remote contains work" found in longer error |
+| Token overlap | Shared keywords (minus stop words) | "push rejected remote ahead" ↔ "failed to push remote contains work" |
+| Error class | Same error category | Both are `file_not_found` class errors |
+| Path similarity | Similar file paths | Both reference `/tmp/something.json` |
+| N-gram overlap | Character-level structure | Catches typos, reworded messages |
+
+Multiple signals agreeing boosts confidence. A regex match alone = 0.90; regex + error class + path = 0.95.
+
+### ⚡ Cascading Failure Detection (v1.1)
+
+When multiple things break at once, they usually share a root cause. The scanner groups related failures:
+
+```
+⚡ 1 cascading failure group detected:
+
+  🔴 [signature] OpenClaw gateway is down — all crons and sub-agents affected
+     Affected: pinterest-pins, compare-builder, kapiko-daily, reel-generator
+     → Fix the root cause (gateway_down) — individual failures will resolve
+```
+
+Grouping strategies:
+- **Signature matching** — known cascade patterns (gateway down, git locked, disk full, network unreachable)
+- **Time proximity** — 3+ failures within 5 minutes = likely shared cause
+- **Source correlation** — 3+ cron jobs in error state = systemic issue
+
+### 🎯 Risk Scoring (v1.1)
+
+Before applying a fix, score the risk. Prevents the agent from auto-fixing a payment pipeline the same way it fixes a static site build:
+
+```bash
+$ python3 scripts/self-heal.py risk "Fix HTML template for compare page build"
+# → ✅ Low risk (0.20) — safe to auto-apply
+
+$ python3 scripts/self-heal.py risk "Update Stripe webhook payment processing"
+# → 🔴 Critical risk (1.00) — escalate to human, do not auto-apply
+```
+
+Built-in risk profiles: `static_site`, `cron_job`, `social_media`, `email`, `payment`, `deployment`, `config`, `database`. Customizable via `risk-profiles.json`.
+
+The `check` command now integrates risk scoring — a high-confidence match on a high-risk system still recommends human review:
+
+```json
+{
+  "confidence": 0.92,
+  "autoApply": false,
+  "risk": { "riskScore": 0.9, "decision": "escalate" }
+}
+```
+
+---
+
 ## What's Included
 
 ### `scripts/scan-failures.py`
